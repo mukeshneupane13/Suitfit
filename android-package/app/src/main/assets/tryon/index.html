@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#F5F2EC" />
+    <meta name="description" content="Try suit styles and colours on your own photo." />
+    <title>SuitFlow Try-On</title>
+    <script>
+      window.__suitflowCameraColour = null;
+      window.__suitflowFabricPattern = null;
+      (function () {
+        var fillDescriptor = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, "fillStyle");
+        var compositeDescriptor = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, "globalCompositeOperation");
+        if (!fillDescriptor || !fillDescriptor.get || !fillDescriptor.set) return;
+        Object.defineProperty(CanvasRenderingContext2D.prototype, "fillStyle", {
+          configurable: fillDescriptor.configurable,
+          enumerable: fillDescriptor.enumerable,
+          get: fillDescriptor.get,
+          set: function (value) {
+            if (this.globalCompositeOperation === "source-atop" && window.__suitflowFabricPattern) {
+              var pattern = this.createPattern(window.__suitflowFabricPattern, "repeat");
+              if (pattern) return fillDescriptor.set.call(this, pattern);
+            }
+            if (this.globalCompositeOperation === "color" && window.__suitflowCameraColour) {
+              return fillDescriptor.set.call(this, window.__suitflowCameraColour);
+            }
+            return fillDescriptor.set.call(this, value);
+          }
+        });
+        if (compositeDescriptor && compositeDescriptor.get && compositeDescriptor.set) {
+          Object.defineProperty(CanvasRenderingContext2D.prototype, "globalCompositeOperation", {
+            configurable: compositeDescriptor.configurable,
+            enumerable: compositeDescriptor.enumerable,
+            get: compositeDescriptor.get,
+            set: function (value) {
+              if (value === "color" && window.__suitflowFabricPattern) {
+                return compositeDescriptor.set.call(this, "source-atop");
+              }
+              return compositeDescriptor.set.call(this, value);
+            }
+          });
+        }
+      })();
+    </script>
+    <script>
+      /*
+       * Keep the original first-day photographic suit artwork, but render its
+       * final fitted layer with a clean edge and full-resolution smoothing.
+       * This hook is deliberately limited to the prepared suit canvas; the
+       * customer's captured photo and cropped face are never filtered.
+       */
+      (function () {
+        var originalDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+        CanvasRenderingContext2D.prototype.drawImage = function () {
+          var source = arguments[0];
+          var isPreparedSuit =
+            source instanceof HTMLCanvasElement &&
+            arguments.length === 5 &&
+            source.width >= 900 &&
+            source.height >= 1400 &&
+            Number(arguments[3]) <= 760 &&
+            Number(arguments[4]) <= 1100;
+
+          if (!isPreparedSuit) {
+            return originalDrawImage.apply(this, arguments);
+          }
+
+          this.save();
+          this.imageSmoothingEnabled = true;
+          this.imageSmoothingQuality = "high";
+
+          /* A tight neutral shadow makes the real garment boundary readable. */
+          this.shadowColor = "rgba(7, 11, 13, 0.62)";
+          this.shadowBlur = 6;
+          this.shadowOffsetX = 0;
+          this.shadowOffsetY = 2;
+          originalDrawImage.apply(this, arguments);
+
+          /*
+           * Redraw the original prepared pixels above the boundary. Do not
+           * apply brightness or contrast here: those filters changed a colour
+           * after the customer selected it, so off-white became grey and
+           * brighter swatches no longer matched the finished suit.
+           */
+          this.shadowColor = "transparent";
+          this.shadowBlur = 0;
+          this.shadowOffsetY = 0;
+          originalDrawImage.apply(this, arguments);
+          this.restore();
+        };
+      })();
+    </script>
+    <script type="module" crossorigin src="/tryon/assets/index-DvEq4Y8E.js?v=photo-colour-match-1"></script>
+    <link rel="stylesheet" crossorigin href="/tryon/assets/index-DPv5pqGd.css?v=exact-11-point-crop-2">
+    <style>
+      /*
+       * Keep the visible photo, pointer coordinates, crop SVG, and exported
+       * 720×960 canvas on one identical 3:4 coordinate surface. Previously the
+       * crop frame was smaller than the displayed canvas on mobile, so a
+       * correct-looking selection produced a different final crop.
+       */
+      .canvas-stage {
+        aspect-ratio: 3 / 4;
+        width: 100%;
+        min-height: 0 !important;
+        max-height: none !important;
+      }
+
+      .canvas-stage canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        max-height: none !important;
+        object-fit: fill;
+      }
+
+      .crop-overlay {
+        inset: 0;
+      }
+
+      .crop-frame {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        aspect-ratio: 3 / 4;
+        border: 0;
+        border-radius: 0;
+        overflow: visible;
+        box-shadow: none;
+      }
+
+      .crop-frame::before,
+      .crop-frame::after {
+        display: none;
+      }
+
+      .crop-frame svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .colour-camera-button {
+        width: 100%;
+        margin: 12px 0 4px;
+        padding: 13px 16px;
+        border: 1px solid #d5cdc0;
+        border-radius: 14px;
+        background: #fff;
+        color: #17201d;
+        font: 700 14px/1.2 Arial, sans-serif;
+      }
+
+      .colour-picker-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: grid;
+        place-items: end center;
+        background: rgba(11, 18, 16, .58);
+      }
+
+      .colour-picker-modal[hidden] { display: none; }
+
+      .colour-picker-card {
+        width: min(100%, 520px);
+        max-height: 92dvh;
+        overflow: auto;
+        padding: 18px;
+        border-radius: 24px 24px 0 0;
+        background: #f5f2ec;
+        color: #17201d;
+        font-family: Arial, sans-serif;
+      }
+
+      .colour-picker-head,
+      .picked-colour-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .colour-picker-head { justify-content: space-between; }
+      .colour-picker-head h2 { margin: 0; font-size: 20px; }
+      .colour-picker-head button {
+        width: 36px;
+        height: 36px;
+        border: 0;
+        border-radius: 50%;
+        background: #e6e0d7;
+        font-size: 22px;
+      }
+
+      .colour-picker-card p {
+        margin: 7px 0 14px;
+        color: #5f6662;
+        font-size: 13px;
+      }
+
+      .colour-source-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .colour-source-actions button,
+      #apply-picked-colour {
+        padding: 12px;
+        border: 0;
+        border-radius: 12px;
+        background: #173f36;
+        color: white;
+        font-weight: 700;
+      }
+
+      #colour-photo-canvas {
+        display: block;
+        width: 100%;
+        max-height: 55dvh;
+        border-radius: 16px;
+        background: #ded8cf;
+        touch-action: manipulation;
+      }
+
+      .picked-colour-row { margin-top: 12px; }
+
+      #picked-colour-swatch {
+        width: 42px;
+        height: 42px;
+        flex: 0 0 auto;
+        border: 3px solid white;
+        border-radius: 50%;
+        background: #173f36;
+        box-shadow: 0 0 0 1px #c9c0b3;
+      }
+
+      #picked-colour-value { min-width: 74px; }
+      #apply-picked-colour { flex: 1; }
+      #apply-picked-colour:disabled { opacity: .45; }
+
+      /* Keep all suit choices visible and readable in the legacy mobile view. */
+      #suit-list {
+        display: grid !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+      }
+      #suit-list button {
+        background: #050505 !important;
+        color: #fff !important;
+        border-color: #050505 !important;
+      }
+      #suit-list button small { color: #d9d9d9 !important; }
+      #suit-list button.active {
+        border-color: #f0c84b !important;
+        box-shadow: 0 0 0 2px #f0c84b !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <input id="web-file-input" type="file" accept="image/*" hidden />
+    <input id="colour-camera-input" type="file" accept="image/*" capture="environment" hidden />
+    <input id="colour-gallery-input" type="file" accept="image/*" hidden />
+    <div id="colour-picker-modal" class="colour-picker-modal" hidden>
+      <section class="colour-picker-card" role="dialog" aria-modal="true" aria-labelledby="colour-picker-title">
+        <div class="colour-picker-head">
+          <h2 id="colour-picker-title">Copy fabric design to this suit</h2>
+          <button id="close-colour-picker" type="button" aria-label="Close">×</button>
+        </div>
+        <p>Take or upload a clear, close photo of the fabric. Its colour, checks, stripes and texture will be repeated across the selected jacket and trousers. The suit cut stays unchanged.</p>
+        <div class="colour-source-actions">
+          <button id="take-colour-photo" type="button">📷 Camera</button>
+          <button id="upload-colour-photo" type="button">▧ Gallery</button>
+        </div>
+        <canvas id="colour-photo-canvas" width="720" height="720"></canvas>
+        <div class="picked-colour-row">
+          <span id="picked-colour-swatch" aria-label="Selected colour"></span>
+          <strong id="picked-colour-value">Add fabric photo</strong>
+          <button id="apply-picked-colour" type="button" disabled>Apply colour + design</button>
+        </div>
+      </section>
+    </div>
+    <script>
+      /*
+       * The bundled web fallback uses one file input for both camera and
+       * gallery. Set its capture mode before the app's click handler runs so
+       * mobile browsers open the native camera for "Take a photo", while
+       * "Upload from gallery" continues to open the photo library.
+       */
+      document.addEventListener("click", function (event) {
+        var cameraButton = event.target.closest("#camera-button");
+        var galleryButton = event.target.closest("#gallery-button");
+        var replaceButton = event.target.closest("#replace-photo");
+        var input = document.getElementById("web-file-input");
+
+        if (!input) return;
+
+        if (cameraButton) {
+          input.setAttribute("capture", "user");
+          input.setAttribute("accept", "image/*");
+        } else if (galleryButton || replaceButton) {
+          input.removeAttribute("capture");
+          input.setAttribute("accept", "image/*");
+        }
+      }, true);
+
+      window.addEventListener("DOMContentLoaded", function () {
+        var modal = document.getElementById("colour-picker-modal");
+        var cameraInput = document.getElementById("colour-camera-input");
+        var galleryInput = document.getElementById("colour-gallery-input");
+        var canvas = document.getElementById("colour-photo-canvas");
+        var context = canvas.getContext("2d", { willReadFrequently: true });
+        var swatch = document.getElementById("picked-colour-swatch");
+        var value = document.getElementById("picked-colour-value");
+        var applyButton = document.getElementById("apply-picked-colour");
+        var selectedColour = null;
+        var applyingCameraColour = false;
+
+        function installMatchButton() {
+          var colourList = document.getElementById("colour-list");
+          if (!colourList || document.getElementById("match-suit-colour")) return false;
+          var button = document.createElement("button");
+          button.id = "match-suit-colour";
+          button.type = "button";
+          button.className = "colour-camera-button";
+          button.textContent = "📷 Copy fabric colour + design";
+          colourList.insertAdjacentElement("afterend", button);
+          button.addEventListener("click", function () { modal.hidden = false; });
+          return true;
+        }
+
+        if (!installMatchButton()) {
+          var appObserver = new MutationObserver(function () {
+            if (installMatchButton()) appObserver.disconnect();
+          });
+          appObserver.observe(document.getElementById("app"), { childList: true, subtree: true });
+        }
+
+        function loadColourPhoto(file) {
+          if (!file) return;
+          var reader = new FileReader();
+          reader.onload = function () {
+            var image = new Image();
+            image.onload = function () {
+              var ratio = Math.min(720 / image.width, 720 / image.height);
+              var width = image.width * ratio;
+              var height = image.height * ratio;
+              canvas.width = 720;
+              canvas.height = 720;
+              context.fillStyle = "#ded8cf";
+              context.fillRect(0, 0, 720, 720);
+              context.drawImage(image, (720 - width) / 2, (720 - height) / 2, width, height);
+              selectedColour = "fabric";
+              swatch.style.backgroundImage = "url(" + reader.result + ")";
+              swatch.style.backgroundSize = "cover";
+              value.textContent = "Fabric ready";
+              applyButton.disabled = false;
+            };
+            image.src = reader.result;
+          };
+          reader.readAsDataURL(file);
+        }
+
+        cameraInput.addEventListener("change", function () {
+          loadColourPhoto(cameraInput.files && cameraInput.files[0]);
+        });
+        galleryInput.addEventListener("change", function () {
+          loadColourPhoto(galleryInput.files && galleryInput.files[0]);
+        });
+        document.getElementById("take-colour-photo").addEventListener("click", function () {
+          cameraInput.value = "";
+          cameraInput.click();
+        });
+        document.getElementById("upload-colour-photo").addEventListener("click", function () {
+          galleryInput.value = "";
+          galleryInput.click();
+        });
+        document.getElementById("close-colour-picker").addEventListener("click", function () {
+          modal.hidden = true;
+        });
+        modal.addEventListener("click", function (event) {
+          if (event.target === modal) modal.hidden = true;
+        });
+
+        applyButton.addEventListener("click", function () {
+          if (!selectedColour) return;
+          var tile = document.createElement("canvas");
+          tile.width = 240;
+          tile.height = 240;
+          var tileContext = tile.getContext("2d");
+          tileContext.globalAlpha = 0.78;
+          tileContext.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, tile.width, tile.height);
+          tileContext.globalAlpha = 1;
+          window.__suitflowFabricPattern = tile;
+          window.__suitflowCameraColour = null;
+          var firstPreset = document.querySelector("#colour-list [data-colour]");
+          applyingCameraColour = true;
+          if (firstPreset) firstPreset.click();
+          applyingCameraColour = false;
+          var label = document.getElementById("selected-colour-label");
+          if (label) label.textContent = "Custom fabric colour + design";
+          modal.hidden = true;
+        });
+
+        /*
+         * A normal preset selection must leave camera-colour mode. The guarded
+         * synthetic click above refreshes the existing suit renderer without
+         * changing the currently selected suit style.
+         */
+        document.addEventListener("click", function (event) {
+          if (!event.target.closest("#colour-list [data-colour]") || applyingCameraColour) return;
+          window.__suitflowCameraColour = null;
+          window.__suitflowFabricPattern = null;
+        }, true);
+      });
+    </script>
+  </body>
+</html>
